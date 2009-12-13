@@ -35,7 +35,6 @@ module Hub
     PRIVATE = 'git@github.com:%s/%s.git'
     PUBLIC  = 'git://github.com/%s/%s.git'
     USER    = `git config --global github.user`.chomp
-    REPO    = `basename $(pwd)`.chomp
     LGHCONF = "http://github.com/guides/local-github-config"
 
     # $ hub clone rtomayko/tilt
@@ -73,7 +72,7 @@ module Hub
         ssh  = args.delete('-p')
         user = args.last
         url  = ssh ? PRIVATE : PUBLIC
-        args << url % [ user, REPO ]
+        args << url % [ user, repo_name ]
       end
     end
 
@@ -84,7 +83,7 @@ module Hub
       if args.delete('-g')
         # Can't do anything if we don't have a USER set.
 
-        url = PRIVATE % [ github_user, REPO ]
+        url = PRIVATE % [ github_user, repo_name ]
         args.after "git remote add origin #{url}"
       end
     end
