@@ -214,6 +214,14 @@ help
       end
     end
 
+    # Returns the name of the repository's root directory
+    def repo_name
+      offset = `git rev-parse --show-prefix`.chomp.chop
+      pwd = `pwd`.chomp
+      root = pwd.sub(offset, "")
+      `basename #{root}`
+    end
+
     # Returns the terminal-formatted manpage, ready to be printed to
     # the screen.
     def hub_manpage
