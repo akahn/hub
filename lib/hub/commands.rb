@@ -219,7 +219,7 @@ help
       offset = `git rev-parse --show-prefix`.chomp.chop
       pwd = `pwd`.chomp
       root = pwd.sub(offset, "")
-      `basename #{root}`
+      `basename #{root}`.chomp
     end
 
     # Returns the terminal-formatted manpage, ready to be printed to
