@@ -152,6 +152,7 @@ module Hub
         exit
       end
     end
+    alias_method "--help", :help
 
     # The text print when `hub help` is run, kept in its own method
     # for the convenience of the author.
@@ -289,7 +290,12 @@ help
         # Wait until we have input before we start the pager
         Kernel.select [STDIN]
 
-        pager = ENV['PAGER'] || 'less -isr'
+        pager = ENV['GIT_PAGER'] ||
+          `git config --get-all core.pager`.split.first || ENV['PAGER'] ||
+          'less -isr'
+
+        pager = 'cat' if pager.empty?
+
         exec pager rescue exec "/bin/sh", "-c", pager
       else
         # Child process
