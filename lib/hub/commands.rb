@@ -97,9 +97,7 @@ module Hub
       branch = args[2]
       remotes = args[1].split(',')
       args[1] = remotes.shift
-      while remotes.length > 0 do
-        args.after "git push #{remotes.shift} #{branch}"
-      end
+      args.after "git push #{remotes.shift} #{branch}"
     end
 
     def alias(args)
