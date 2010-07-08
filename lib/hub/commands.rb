@@ -1,4 +1,7 @@
 module Hub
+  # See context.rb
+  module Context; end
+
   # The Commands module houses the git commands that hub
   # lovingly wraps. If a method exists here, it is expected to have a
   # corresponding git command which either gets run before or after
@@ -31,31 +34,70 @@ module Hub
     instance_methods.each { |m| undef_method(m) unless m =~ /(^__|send|to\?$)/ }
     extend self
 
-    # Templates and useful information.
-    PRIVATE = 'git@github.com:%s/%s.git'
-    PUBLIC  = 'git://github.com/%s/%s.git'
-    USER    = `git config --global github.user`.chomp
-    LGHCONF = "http://github.com/guides/local-github-config"
+    # Provides `github_url` and various inspection methods
+    extend Context
+
+    API_REPO = 'http://github.com/api/v2/yaml/repos/show/%s/%s'
+    API_FORK = 'http://github.com/api/v2/yaml/repos/fork/%s/%s'
 
     # $ hub clone rtomayko/tilt
     # > git clone git://github.com/rtomayko/tilt.
     #
     # $ hub clone -p kneath/hemingway
     # > git clone git@github.com:kneath/hemingway.git
+    #
+    # $ hub clone tilt
+    # > git clone git://github.com/YOUR_LOGIN/tilt.
+    #
+    # $ hub clone -p github
+    # > git clone git@github.com:YOUR_LOGIN/hemingway.git
     def clone(args)
       ssh = args.delete('-p')
-      args[1..-1].each_with_index do |arg, i|
-        i += 1
-        if arg.scan('/').size == 1 && !arg.include?(':')
-          url = ssh ? PRIVATE : PUBLIC
-          args[i] = url % arg.split('/')
+
+      last_args = args[1..-1].reject { |arg| arg == "--" }.last(3)
+      last_args.each do |arg|
+        if arg =~ /^-/
+          # Skip mandatory arguments.
+          last_args.shift if arg =~ /^(--(ref|o|br|u|t|d)[^=]+|-(o|b|u|d))$/
+          next
+        end
+
+        if arg =~ %r{.+?://|.+?@} || File.directory?(arg)
+          # Bail out early for URLs and local paths.
           break
-        elsif arg !~ /:|\//
-          url = ssh ? PRIVATE : PUBLIC
-          args[i] = url % [ github_user, arg ]
+        elsif arg.scan('/').size <= 1 && !arg.include?(':')
+          # $ hub clone rtomayko/tilt
+          # $ hub clone tilt
+          args[args.index(arg)] = github_url(:repo => arg, :private => ssh)
           break
         end
       end
+    end
+
+    # $ hub submodule add wycats/bundler vendor/bundler
+    # > git submodule add git://github.com/wycats/bundler.git vendor/bundler
+    #
+    # $ hub submodule add -p wycats/bundler vendor/bundler
+    # > git submodule add git@github.com:wycats/bundler.git vendor/bundler
+    #
+    # $ hub submodule add -b ryppl ryppl/pip vendor/bundler
+    # > git submodule add -b ryppl git://github.com/ryppl/pip.git vendor/pip
+    def submodule(args)
+      return unless index = args.index('add')
+      args.delete_at index
+
+      branch = args.index('-b') || args.index('--branch')
+      if branch
+        args.delete_at branch
+        branch_name = args.delete_at branch
+      end
+
+      clone(args)
+
+      if branch_name
+        args.insert branch, '-b', branch_name
+      end
+      args.insert index, 'add'
     end
 
     # $ hub remote add pjhyett
@@ -63,16 +105,117 @@ module Hub
     #
     # $ hub remote add -p mojombo
     # > git remote add mojombo git@github.com:mojombo/THIS_REPO.git
+    #
+    # $ hub remote add origin
+    # > git remote add origin git://github.com/YOUR_LOGIN/THIS_REPO.git
     def remote(args)
-      return unless args[1] == 'add'
+      return if args[1] != 'add' || args.last =~ %r{.+?://|.+?@|^[./]}
 
-      # Assume GitHub usernames don't ever contain : or /, while URLs
-      # do.
-      if args[-1] !~ /:|\//
-        ssh  = args.delete('-p')
-        user = args.last
-        url  = ssh ? PRIVATE : PUBLIC
-        args << url % [ user, repo_name ]
+      ssh = args.delete('-p')
+
+      # user/repo
+      args.last =~ /\b(.+?)(?:\/(.+))?$/
+      user, repo = $1, $2
+
+      if args.words[2] == 'origin' && args.words[3].nil?
+        # Origin special case triggers default user/repo
+        user = repo = nil
+      elsif args.words[-2] == args.words[1]
+        # rtomayko/tilt => rtomayko
+        # Make sure you dance around flags.
+        idx = args.index( args.words[-1] )
+        args[idx] = user
+      else
+        # They're specifying the remote name manually (e.g.
+        # git remote add blah rtomayko/tilt), so just drop the last
+        # argument.
+        args.replace args[0...-1]
+      end
+
+      args << github_url(:user => user, :repo => repo, :private => ssh)
+    end
+
+    # $ hub fetch mislav
+    # > git remote add mislav git://github.com/mislav/REPO.git
+    # > git fetch mislav
+    #
+    # $ hub fetch --multiple mislav xoebus
+    # > git remote add mislav ...
+    # > git remote add xoebus ...
+    # > git fetch --multiple mislav xoebus
+    def fetch(args)
+      # $ hub fetch --multiple <name1>, <name2>, ...
+      if args.include?('--multiple')
+        names = args.words[1..-1]
+      # $ hub fetch <name>
+      elsif name = args.words[1]
+        # $ hub fetch <name1>,<name2>,...
+        if name =~ /^\w+(,\w+)+$/
+          index = args.index(name)
+          args.delete(name)
+          names = name.split(',')
+          args.insert(index, *names)
+          args.insert(index, '--multiple')
+        else
+          names = [name]
+        end
+      else
+        names = []
+      end
+
+      names.reject! { |name|
+        name =~ /\W/ or remotes.include?(name) or
+          remotes_group(name) or not repo_exists?(name)
+      }
+
+      if names.any?
+        commands = names.map { |name| "git remote add #{name} #{github_url(:user => name)}" }
+        commands << args.to_exec.join(' ')
+        args.replace commands.shift.split(' ')
+        args.shift # don't want "git"
+        args.after commands.join('; ')
+      end
+    end
+
+    # $ git cherry-pick http://github.com/mislav/hub/commit/a319d88#comments
+    # > git remote add -f mislav git://github.com/mislav/hub.git
+    # > git cherry-pick a319d88
+    #
+    # $ git cherry-pick mislav@a319d88
+    # > git remote add -f mislav git://github.com/mislav/hub.git
+    # > git cherry-pick a319d88
+    #
+    # $ git cherry-pick mislav@SHA
+    # > git fetch mislav
+    # > git cherry-pick SHA
+    def cherry_pick(args)
+      unless args.include?('-m') or args.include?('--mainline')
+        case ref = args.words.last
+        when %r{^(https?:)//github.com/(.+?)/(.+?)/commit/([a-f1-9]{7,40})}
+          scheme, user, repo, sha = $1, $2, $3, $4
+          args[args.index(ref)] = sha
+        when /^(\w+)@([a-f1-9]{7,40})$/
+          scheme, user, repo, sha = nil, $1, nil, $2
+          args[args.index(ref)] = sha
+        else
+          user = nil
+        end
+
+        if user
+          # cherry-pick comes after the fetch
+          args.after args.to_exec.join(' ')
+
+          if user == repo_owner
+            # fetch from origin if the repo belongs to the user
+            args.replace ['fetch', default_remote]
+          elsif remotes.include?(user)
+            args.replace ['fetch', user]
+          else
+            secure = scheme == 'https:'
+            remote_url = github_url(:user => user, :repo => repo, :private => secure)
+            args.replace ['remote', 'add', '-f', user, remote_url]
+          end
+        end
       end
     end
 
@@ -81,18 +224,159 @@ module Hub
     # > git remote add origin git@github.com:USER/REPO.git
     def init(args)
       if args.delete('-g')
-        # Can't do anything if we don't have a USER set.
-
-        url = PRIVATE % [ github_user, repo_name ]
+        url = github_url(:private => true, :repo => File.basename(Dir.pwd))
         args.after "git remote add origin #{url}"
       end
+    end
+
+    # $ hub fork
+    # ... hardcore forking action ...
+    # > git remote add -f YOUR_USER git@github.com:YOUR_USER/CURRENT_REPO.git
+    def fork(args)
+      # can't do anything without token and original owner name
+      if github_user && github_token && repo_owner
+        if repo_exists?(github_user)
+          puts "#{github_user}/#{repo_name} already exists on GitHub"
+        else
+          fork_repo
+        end
+
+        if args.include?('--no-remote')
+          exit
+        else
+          url = github_url(:private => true)
+          args.replace %W"remote add -f #{github_user} #{url}"
+          args.after { puts "new remote: #{github_user}" }
+        end
+      end
+    end
+
+    # $ hub push origin,staging cool-feature
+    # > git push origin cool-feature
+    # > git push staging cool-feature
+    def push(args)
+      return unless args[1] =~ /,/
+
+      branch  = args[2]
+      remotes = args[1].split(',')
+      args[1] = remotes.shift
+
+      after = "git push #{remotes.shift} #{branch}"
+
+      while remotes.length > 0
+        after += "; git push #{remotes.shift} #{branch}"
+      end
+
+      args.after after
+    end
+
+    # $ hub browse
+    # > open http://github.com/CURRENT_REPO
+    #
+    # $ hub browse -- issues
+    # > open http://github.com/CURRENT_REPO/issues
+    #
+    # $ hub browse pjhyett/github-services
+    # > open http://github.com/pjhyett/github-services
+    #
+    # $ hub browse -p pjhyett/github-fi
+    # > open https://github.com/pjhyett/github-fi
+    #
+    # $ hub browse github-services
+    # > open http://github.com/YOUR_LOGIN/github-services
+    #
+    # $ hub browse github-services wiki
+    # > open http://wiki.github.com/YOUR_LOGIN/github-services
+    #
+    # $ hub browse -p github-fi
+    # > open https://github.com/YOUR_LOGIN/github-fi
+    def browse(args)
+      args.shift
+      browse_command(args) do
+        user = repo = nil
+        dest = args.shift
+        dest = nil if dest == '--'
+
+        if dest
+          # $ hub browse pjhyett/github-services
+          # $ hub browse github-services
+          repo = dest
+        elsif repo_user
+          # $ hub browse
+          user = repo_user
+        else
+          abort "Usage: hub browse [<USER>/]<REPOSITORY>"
+        end
+
+        params = { :user => user, :repo => repo }
+
+        # $ hub browse -- wiki
+        case subpage = args.shift
+        when 'wiki'
+          params[:web] = 'wiki'
+        when 'commits'
+          branch = (!dest && tracked_branch) || 'master'
+          params[:web] = "/commits/#{branch}"
+        when 'tree', NilClass
+          branch = !dest && tracked_branch
+          params[:web] = "/tree/#{branch}" if branch && branch != 'master'
+        else
+          params[:web] = "/#{subpage}"
+        end
+
+        params
+      end
+    end
+
+    # $ hub compare 1.0...fix
+    # > open http://github.com/CURRENT_REPO/compare/1.0...fix
+    # $ hub compare refactor
+    # > open http://github.com/CURRENT_REPO/compare/refactor
+    # $ hub compare myfork feature
+    # > open http://github.com/myfork/REPO/compare/feature
+    # $ hub compare -p myfork topsecret
+    # > open https://github.com/myfork/REPO/compare/topsecret
+    # $ hub compare -u 1.0...2.0
+    # prints "http://github.com/CURRENT_REPO/compare/1.0...2.0"
+    def compare(args)
+      args.shift
+      browse_command(args) do
+        if args.empty?
+          branch = tracked_branch
+          if branch && branch != 'master'
+            range, user = branch, repo_user
+          else
+            abort "Usage: hub compare [USER] [<START>...]<END>"
+          end
+        else
+          range = args.pop
+          user = args.pop || repo_user
+        end
+        { :user => user, :web => "/compare/#{range}" }
+      end
+    end
+
+    # $ hub hub standalone
+    # Prints the "standalone" version of hub for an easy, memorable
+    # installation sequence:
+    #
+    # $ gem install git-hub
+    # $ hub hub standalone > ~/bin/hub && chmod 755 ~/bin/hub
+    # $ gem uninstall git-hub
+    def hub(args)
+      return help(args) unless args[1] == 'standalone'
+      require 'hub/standalone'
+      puts Hub::Standalone.build
+      exit
+    rescue LoadError
+      abort "hub is running in standalone mode."
     end
 
     def alias(args)
       shells = {
         'sh'   => 'alias git=hub',
         'bash' => 'alias git=hub',
-        'zsh'  => 'alias git=hub',
+        'zsh'  => 'function git(){hub "$@"}',
         'csh'  => 'alias git hub',
         'fish' => 'alias git hub'
       }
@@ -144,10 +428,13 @@ module Hub
     # $ hub help
     # (print improved help text)
     def help(args)
-      if args[1] == 'hub'
+      command = args.grep(/^[^-]/)[1]
+
+      if command == 'hub'
         puts hub_manpage
         exit
-      elsif args.size == 1
+      elsif command.nil?
+        ENV['GIT_PAGER'] = '' if args.grep(/^-{1,2}p/).empty? # Use `cat`.
         puts improved_help_text
         exit
       end
@@ -204,28 +491,51 @@ help
     # from the command line.
     #
 
-    # Either returns the GitHub user as set by git-config(1) or aborts
-    # with an error message.
-    def github_user
-      if USER.empty?
-        abort "** No GitHub user set. See #{LGHCONF}"
+    # Checks whether a command exists on this system in the $PATH.
+    #
+    # name - The String name of the command to check for.
+    #
+    # Returns a Boolean.
+    def command?(name)
+      `type -t #{name}`
+      $?.success?
+    end
+
+    # Detects commands to launch the user's browser, checking $BROWSER
+    # first then falling back to a few common launchers. Aborts with
+    # an error if it can't find anything appropriate.
+    #
+    # Returns a launch command.
+    def browser_launcher
+      if ENV['BROWSER']
+        ENV['BROWSER']
+      elsif RUBY_PLATFORM.include?('darwin')
+        "open"
+      elsif command?("xdg-open")
+        "xdg-open"
+      elsif command?("cygstart")
+        "cygstart"
       else
-        USER
+        abort "Please set $BROWSER to a web launcher to use this command."
       end
     end
 
-    # Returns the name of the repository's root directory
-    def repo_name
-      offset = `git rev-parse --show-prefix`.chomp.chop
-      pwd = `pwd`.chomp
-      root = pwd.sub(offset, "")
-      `basename #{root}`.chomp
+    # Handles common functionality of browser commands like `browse`
+    # and `compare`. Yields a block that returns params for `github_url`.
+    def browse_command(args)
+      url_only = args.delete('-u')
+      secure = args.delete('-p')
+      params = yield
+
+      args.executable = url_only ? 'echo' : browser_launcher
+      args.push github_url({:web => true, :private => secure}.update(params))
     end
+
 
     # Returns the terminal-formatted manpage, ready to be printed to
     # the screen.
     def hub_manpage
-      return "** Can't find groff(1)" unless groff?
+      return "** Can't find groff(1)" unless command?('groff')
 
       require 'open3'
       out = nil
@@ -235,12 +545,6 @@ help
         out = stdout.read.strip
       end
       out
-    end
-
-    # Returns true if groff is installed and in our path, false if
-    # not.
-    def groff?
-      system("which groff")
     end
 
     # The groff command complete with crazy arguments we need to run
@@ -304,6 +608,21 @@ help
         read.close
         write.close
       end
+    end
+
+    # Determines whether a user has a fork of the current repo on GitHub.
+    def repo_exists?(user)
+      require 'net/http'
+      url = API_REPO % [user, repo_name]
+      Net::HTTPSuccess === Net::HTTP.get_response(URI(url))
+    end
+
+    # Forks the current repo using the GitHub API.
+    #
+    # Returns nothing.
+    def fork_repo
+      url = API_FORK % [repo_owner, repo_name]
+      Net::HTTP.post_form(URI(url), 'login' => github_user, 'token' => github_token)
     end
   end
 end

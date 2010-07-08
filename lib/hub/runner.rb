@@ -6,15 +6,16 @@ module Hub
   # augment a git command, is kept in the `Hub::Commands` module.
   class Runner
     attr_reader :args
+    
     def initialize(*args)
       @args = Args.new(args)
 
       # Hack to emulate git-style
-      @args[0] = 'help' if @args.empty?
+      @args.unshift 'help' if @args.grep(/^[^-]|version/).empty?
 
-      if Commands.respond_to?(@args[0])
-        Commands.send(@args[0], @args)
-      end
+      # git commands can have dashes
+      cmd = @args[0].sub(/(\w)-/, '\1_')
+      Commands.send(cmd, @args) if Commands.respond_to?(cmd)
     end
 
     # Shortcut
@@ -34,7 +35,7 @@ module Hub
     # A string representation of the git command we would run if
     # #execute were called.
     def command
-      "git #{args.join(' ')}"
+      args.to_exec.join(' ')
     end
 
     # Runs the target git command with an optional callback. Replaces
@@ -43,7 +44,7 @@ module Hub
       if args.after?
         execute_with_after_callback
       else
-        exec "git", *args
+        exec(*args.to_exec)
       end
     end
 
@@ -53,7 +54,7 @@ module Hub
     # callback.
     def execute_with_after_callback
       after = args.after
-      if system("git", *args)
+      if system(*args.to_exec)
         after.respond_to?(:call) ? after.call : exec(after)
         exit
       else

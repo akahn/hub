@@ -8,22 +8,16 @@ It can used on its own or as a `git` wrapper.
 Normal:
 
     $ hub clone rtomayko/tilt
-    Initialized empty Git repository in /Users/chris/sandbox/tilt/.git/
-    remote: Counting objects: 307, done.
-    remote: Compressing objects: 100% (219/219), done.
-    remote: Total 307 (delta 175), reused 85 (delta 45)
-    Receiving objects: 100% (307/307), 48.91 KiB, done.
-    Resolving deltas: 100% (175/175), done.
+
+    Expands to:
+    $ git clone git://github.com/rtomayko/tilt.git
 
 Wrapping `git`:
 
     $ git clone rack/rack
-    Initialized empty Git repository in /Users/chris/sandbox/rack/.git/
-    remote: Counting objects: 4005, done.
-    remote: Compressing objects: 100% (1738/1738), done.
-    remote: Total 4005 (delta 2505), reused 3620 (delta 2208)
-    Receiving objects: 100% (4005/4005), 785.82 KiB | 129 KiB/s, done.
-    Resolving deltas: 100% (2505/2505), done.
+
+    Expands to:
+    $ git clone git://github.com/rack/rack.git
 
 hub requires you have `git` installed and in your `$PATH`. It also
 requires Ruby 1.8.6+ or Ruby 1.9.1+. No other libraries necessary.
@@ -36,17 +30,22 @@ Install
 
 `hub` is most easily installed as a standalone script:
 
-    curl -s http://defunkt.github.com/hub/standalone > ~/bin/hub && chmod 755 !#:4
+    curl -s http://defunkt.github.com/hub/standalone > ~/bin/hub &&
+    chmod 755 ~/bin/hub
 
 Assuming `~/bin/` is in your `$PATH`, you're ready to roll:
 
     $ hub version
-    git version 1.6.4.2
-    hub version 0.1.0
+    git version 1.7.0.4
+    hub version 1.1.0
 
 ### Homebrew
 
-    brew install hub
+    $ brew install hub
+    $ which hub
+    /usr/local/bin/hub
+    $ hub version
+    ...
 
 ### RubyGems
 
@@ -54,7 +53,20 @@ Though not recommended, `hub` can also be installed as a RubyGem:
 
     $ gem install git-hub
 
-(Yes, the gem name is `git-hub`.)
+Yes, the gem name is "git-hub".
+
+(It's not recommended for casual use because of the RubyGems startup
+time. See [this gist][speed] for information.)
+
+### Standalone via RubyGems
+
+Yes, the gem name is still "git-hub":
+
+    $ gem install git-hub
+    $ hub hub standalone > ~/bin/hub && chmod 755 ~/bin/hub
+
+This installs a standalone version which doesn't require RubyGems to
+run.
 
 ### Source
 
@@ -68,7 +80,7 @@ You can also install from source:
 Aliasing
 --------
 
-hub works best when it wraps `git`. This is not dangerous - your
+`hub` works best when it wraps `git`. This is not dangerous - your
 normal git commands should all work. hub merely adds some sugar.
 
 Typing `hub alias <shell>` will display alias instructions for
@@ -116,11 +128,105 @@ superpowers:
     $ git remote add -p rtomayko
     > git remote add rtomayko git@github.com:rtomayko/CURRENT_REPO.git
 
+    $ git remote add origin
+    > git remote add origin git://github.com/YOUR_USER/CURRENT_REPO.git
+
+### git fetch
+
+    $ git fetch mislav
+    > git remote add mislav git://github.com/mislav/REPO.git
+    > git fetch mislav
+
+    $ git fetch mislav,xoebus
+    > git remote add mislav ...
+    > git remote add xoebus ...
+    > git fetch --multiple mislav xoebus
+
+### git cherry-pick
+
+    $ git cherry-pick http://github.com/mislav/REPO/commit/SHA
+    > git remote add -f mislav git://github.com/mislav/REPO.git
+    > git cherry-pick SHA
+
+    $ git cherry-pick mislav@SHA
+    > git remote add -f mislav git://github.com/mislav/CURRENT_REPO.git
+    > git cherry-pick SHA
+
+    $ git cherry-pick mislav@SHA
+    > git fetch mislav
+    > git cherry-pick SHA
+
+### git fork
+
+    $ git fork
+    ... hardcore forking action ...
+    > git remote add -f YOUR_USER git@github.com:YOUR_USER/CURRENT_REPO.git
+
+Forks the original repo on GitHub and adds the new remote under your
+username. It requires your GitHub token to be present; see "GitHub
+login" below for details.
+
 ### git init
 
     $ git init -g
     > git init
     > git remote add origin git@github.com:YOUR_USER/REPO.git
+
+### git push
+
+    $ git push origin,staging,qa bert_timeout
+    > git push origin bert_timeout
+    > git push staging bert_timeout
+    > git push qa bert_timeout
+
+### git browse
+
+    $ git browse
+    > open http://github.com/CURRENT_REPO
+
+    $ git browse -- issues
+    > open http://github.com/CURRENT_REPO/issues
+
+    $ git browse schacon/ticgit
+    > open http://github.com/schacon/ticgit
+
+    $ git browse -p schacon/ticgit
+    > open https://github.com/schacon/ticgit
+
+    $ git browse resque
+    > open http://github.com/YOUR_USER/resque
+
+    $ git browse resque network
+    > open http://github.com/YOUR_USER/resque/network
+
+    $ git browse -p resque
+    > open https://github.com:YOUR_USER/resque
+
+### git compare
+
+    $ git compare refactor
+    > open http://github.com/CURRENT_REPO/compare/refactor
+
+    $ git compare 1.0...1.1
+    > open http://github.com/CURRENT_REPO/compare/1.0...1.1
+
+    $ git compare -u fix
+    > (http://github.com/CURRENT_REPO/compare/fix)
+
+    $ git compare other-user patch
+    > open http://github.com/other-user/REPO/compare/patch
+
+### git submodule
+
+    $ hub submodule add wycats/bundler vendor/bundler
+    > git submodule add git://github.com/wycats/bundler.git vendor/bundler
+
+    $ hub submodule add -p wycats/bundler vendor/bundler
+    > git submodule add git@github.com:wycats/bundler.git vendor/bundler
+
+    $ hub submodule add -b ryppl ryppl/pip vendor/pip
+    > git submodule add -b ryppl git://github.com/ryppl/pip.git vendor/pip
+
 
 ### git help
 
@@ -144,7 +250,29 @@ If you see nothing, you need to set the config setting:
 
     $ git config --global github.user YOUR_USER
 
-See <http://github.com/guides/local-github-config> for more information.
+For commands that require write access to GitHub (such as `fork`), you'll want to
+setup "github.token" as well. See [local GitHub config guide][2] for more information.
+
+
+Configuration
+-------------
+
+If you prefer `http://` clones to `git://` clones, you can set the
+`hub.http-clone` option to true using `git-config`.
+
+For example:
+
+    $ git clone defunkt/repl
+    < git clone >
+    $ git config --global --bool hub.http-clone true
+    $ git clone defunkt/repl
+    < http clone >
+
+Or you can enter this manually into your `~/.gitconfig` file:
+
+    $ cat ~/.gitconfig
+    [hub]
+      http-clone = yes
 
 
 Prior Art
@@ -169,6 +297,16 @@ Once you've made your great commits:
 4. Create an [Issue][1] with a link to your branch
 5. That's it!
 
+### Development Gems
+You will need the following gems (and their dependencies) to
+contribute to `hub`:
+
+* `rake` (`gem install rake`)
+* `kicker` (`gem install kicker`)
+* `turn` (`gem install turn`)
+* `mg` (`gem install mg`)
+* `ronn` (`gem install ronn`)
+* `webhelper` (`gem install webhelper`)
 
 Meta
 ----
@@ -188,3 +326,5 @@ Chris Wanstrath :: chris@ozmm.org :: @defunkt
 
 [0]: http://help.github.com/forking/
 [1]: http://github.com/defunkt/hub/issues
+[speed]: http://gist.github.com/284823
+[2]: http://github.com/guides/local-github-config
